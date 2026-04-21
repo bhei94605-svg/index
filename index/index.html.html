@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>南丰灌芯糖 · 交互装置 - 光影隐喻版</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.min.js"></script>
+    <style>
+        :root { --bg-color: #f5f0e8; --text-color: #333; --label-color: #999; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: url('huaban_background.png') center center / cover no-repeat; font-family: 'Noto Serif SC', serif; }
+        .texture-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0.08; background-image: url('https://www.transparenttextures.com/patterns/linen-design.png'); z-index: 5; }
+        #webgl-canvas { position: absolute; top: 0; left: 0; z-index: 1; background: transparent; }
+        
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: grid; grid-template-columns: 240px 1fr 240px; grid-template-rows: 80px 1fr 80px; padding: 40px; box-sizing: border-box; }
+        header { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 15px; }
+        header h1 { font-size: 18px; letter-spacing: 4px; margin: 0; font-weight: 700; color: #333; }
+        .panel-left, .panel-right { display: flex; flex-direction: column; gap: 30px; padding-top: 40px; }
+        .panel-right { text-align: right; }
+        .data-item { display: flex; flex-direction: column; }
+        .label { font-size: 10px; color: var(--label-color); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 2px; }
+        .value { font-size: 16px; font-weight: 700; color: #444; }
+        #val-folds, #val-pieces, #val-filling { color: #b87820; font-size: 20px; }
+        footer { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: flex-end; font-size: 11px; opacity: 0.6; }
+        
+        #video-container { position: absolute; top: 80px; right: 40px; width: 180px; height: 135px; background: #000; border-radius: 4px; overflow: hidden; z-index: 11; border: 1px solid rgba(0,0,0,0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.05);}
+        #input-video { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); opacity: 0.6; }
+        #output-canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); z-index: 12; }
+
+        /* 🔥 1. 恢复中央底部气泡文字提示 */
+        .hint-container { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.7); padding: 12px 30px; border-radius: 30px; border: 1px solid rgba(184, 120, 32, 0.2); backdrop-filter: blur(4px); transition: opacity 0.5s ease; z-index: 20; box-shadow: 0 5px 15px rgba(184, 120, 32, 0.05); }
+        .hint-text { font-size: 15px; color: #b87820; font-weight: 700; letter-spacing: 1px; }
+
+        /* 🔥 2. 保留侧边图示提示 */
+        .prompt-side { 
+            position: absolute; bottom: 100px; width: 160px; 
+            pointer-events: none; z-index: 10; 
+            display: flex; flex-direction: column; align-items: center; gap: 12px; 
+            opacity: 1; transition: opacity 0.5s ease;
+            color: #b87820;
+        }
+        #prompt-left { left: 80px; }
+        #prompt-right { right: 80px; }
+        
+        .gesture-arrow { width: 70px; height: 35px; filter: drop-shadow(0 4px 8px rgba(184,120,32,0.3)); }
+        .side-text { font-size: 13px; font-weight: 700; letter-spacing: 2px; text-shadow: 0 2px 4px rgba(255,255,255,0.8); }
+
+        @keyframes arrowPullLeft { 0%, 100% { transform: translateX(0); opacity: 0.4; } 50% { transform: translateX(-20px); opacity: 1; } }
+        @keyframes arrowPullRight { 0%, 100% { transform: translateX(0); opacity: 0.4; } 50% { transform: translateX(20px); opacity: 1; } }
+        @keyframes arrowCutLeft { 0%, 100% { transform: translateX(0); opacity: 0.4; } 50% { transform: translateX(25px); opacity: 1; } }
+        @keyframes arrowCutRight { 0%, 100% { transform: translateX(0); opacity: 0.4; } 50% { transform: translateX(-25px); opacity: 1; } }
+        @keyframes arrowPulse { 0%, 100% { transform: scale(1); opacity: 0.4; } 50% { transform: scale(1.15); opacity: 1; } }
+
+        .anim-pull-left svg { animation: arrowPullLeft 1.5s infinite ease-in-out; }
+        .anim-pull-right svg { animation: arrowPullRight 1.5s infinite ease-in-out; }
+        .anim-cut-left svg { animation: arrowCutLeft 1s infinite cubic-bezier(0.68, -0.55, 0.265, 1.55); }
+        .anim-cut-right svg { animation: arrowCutRight 1s infinite cubic-bezier(0.68, -0.55, 0.265, 1.55); }
+        .anim-fill svg { animation: arrowPulse 1.5s infinite ease-in-out; }
+
+        /* 电影级特写结尾UI */
+        #complete-overlay {
+            position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+            text-align: center; opacity: 0; pointer-events: none;
+            transition: opacity 1s ease, transform 1s ease; z-index: 15;
+        }
+        #complete-overlay.show { opacity: 1; transform: translate(-50%, -60%); }
+        #complete-overlay h2 { font-size: 56px; color: #b87820; margin: 0 0 15px 0; letter-spacing: 8px; font-weight: 700; text-shadow: 0 10px 30px rgba(184,120,32,0.15); }
+        #complete-overlay p { font-size: 20px; color: #555; margin: 0; letter-spacing: 4px; font-weight: 300; }
+    </style>
+</head>
+<body>
+    <div class="texture-overlay"></div>
+    <canvas id="webgl-canvas"></canvas>
+    
+    <div id="video-container">
+        <video id="input-video" playsinline></video>
+        <canvas id="output-canvas" width="640" height="480"></canvas>
+    </div>
+
+    <div class="ui-layer">
+        <header><h1>南丰手工糖 · 交互装置</h1><span>NANFENG 2026</span></header>
+        
+        <div class="panel-left">
+            <div class="data-item"><div class="label">Step</div><div class="value" id="val-step">1. 拔糖 / PULLING</div></div>
+            <div class="data-item"><div class="label">Stretch</div><div class="value" id="val-stretch">0.0%</div></div>
+            <div class="data-item"><div class="label">Folds</div><div class="value" id="val-folds">0 / 4</div></div>
+        </div>
+        
+        <div class="panel-right">
+            <div class="data-item"><div class="label">Light Core</div><div class="value" id="val-filling" style="color: #b87820;">0%</div></div>
+            <div class="data-item"><div class="label">Pieces Cut</div><div class="value" id="val-pieces">0 / 6</div></div>
+            <div class="data-item"><div class="label">Status</div><div class="value" id="val-status">系统初始化...</div></div>
+        </div>
+        
+        <div class="hint-container" id="main-hint">
+            <div class="hint-text" id="hint-text">向两侧拉伸后合拢，对折糖块</div>
+        </div>
+
+        <div id="prompt-left" class="prompt-side"></div>
+        <div id="prompt-right" class="prompt-side"></div>
+
+        <div id="complete-overlay">
+            <h2>灌芯守艺</h2>
+            <p>感谢体验南丰非遗手工技艺</p>
+        </div>
+
+        <footer><div>CAMERA: ACTIVE</div><div>田野调研：手工的拉扯之间</div></footer>
+    </div>
+
+    <script>
+        let scene, camera, renderer, instancedMesh;
+        const width = window.innerWidth, height = window.innerHeight;
+        const INSTANCE_COUNT = 350; 
+        
+        const videoCanvas = document.getElementById('output-canvas');
+        const videoCtx = videoCanvas.getContext('2d');
+        
+        let state = 'PULLING'; 
+        let foldCount = 0;
+        const MAX_FOLDS = 4;
+        let isFullyStretched = false;
+        let stretchRatio = 0, smoothStretch = 0;
+        let p1Smooth = new THREE.Vector3(-100, 0, 0), p2Smooth = new THREE.Vector3(100, 0, 0);
+        
+        let fillingAmount = 0; 
+        let piecesCut = 0;
+        const MAX_PIECES = 6;
+        let cutCooldown = 0; 
+        let fallingPieces = []; 
+
+        let targetCamZ = 1000;
+        let targetCamY = 0;
+
+        const COLOR_AMBER = new THREE.Color(0xb87820);
+        const COLOR_WHITE = new THREE.Color(0xfdf4e3); 
+        const COLOR_GLOW = new THREE.Color(0xffb84d);  
+
+        const dummyMatrix = new THREE.Matrix4();
+        const dummyColor = new THREE.Color();
+        const dummyScale = new THREE.Vector3();
+        const baseMatrix = new THREE.Matrix4();
+        const twistRotation = new THREE.Matrix4();
+
+        const SVG_ARROW_LEFT = `<svg class="gesture-arrow" viewBox="0 0 100 50"><path d="M 70 25 L 30 25 M 45 10 L 30 25 L 45 40" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        const SVG_ARROW_RIGHT = `<svg class="gesture-arrow" viewBox="0 0 100 50"><path d="M 30 25 L 70 25 M 55 10 L 70 25 L 55 40" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        const SVG_CIRCLE = `<svg class="gesture-arrow" viewBox="0 0 100 50"><circle cx="50" cy="25" r="14" fill="none" stroke="currentColor" stroke-width="5"/></svg>`;
+
+        // ============ 音效系统 ============
+        let audioCtx = null;
+        let bgmStarted = false;
+        let bgmOscs = [], bgmNoise = null, bgmGain = null;
+        let pullPlaying = false;
+
+        function initAudio() {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        function startBGM() {
+            if (!audioCtx) initAudio();
+            if (bgmStarted) return;
+            bgmStarted = true;
+
+            bgmGain = audioCtx.createGain();
+            bgmGain.gain.value = 0.12;
+            bgmGain.connect(audioCtx.destination);
+
+            // 低频 Drone — 纯净正弦波
+            [[55, 0.08], [82.5, 0.04], [110, 0.03]].forEach(([f, vol]) => {
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = f;
+                g.gain.value = vol;
+                osc.connect(g);
+                g.connect(bgmGain);
+                osc.start();
+                bgmOscs.push(osc);
+            });
+
+            // 空灵泛音
+            const shimmer = audioCtx.createOscillator();
+            const shimGain = audioCtx.createGain();
+            shimmer.type = 'sine';
+            shimmer.frequency.value = 440;
+            shimGain.gain.value = 0.015;
+            shimmer.connect(shimGain);
+            shimGain.connect(bgmGain);
+            shimmer.start();
+            bgmOscs.push(shimmer);
+
+            // 轻柔空气白噪声
+            const bufLen = audioCtx.sampleRate * 2;
+            const buf = audioCtx.createBuffer(1, bufLen, audioCtx.sampleRate);
+            const data = buf.getChannelData(0);
+            for (let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1);
+            bgmNoise = audioCtx.createBufferSource();
+            bgmNoise.buffer = buf;
+            bgmNoise.loop = true;
+            const nFilt = audioCtx.createBiquadFilter();
+            nFilt.type = 'highpass';
+            nFilt.frequency.value = 3000;
+            const nGain = audioCtx.createGain();
+            nGain.gain.value = 0.012;
+            bgmNoise.connect(nFilt);
+            nFilt.connect(nGain);
+            nGain.connect(bgmGain);
+            bgmNoise.start();
+        }
+
+        function playPullSound(intensity) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            // 橡皮筋拉伸 — 纯净正弦滑音
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(150 + intensity * 250, now);
+            osc.frequency.exponentialRampToValueAtTime(80 + intensity * 120, now + 0.15);
+            g.gain.setValueAtTime(0.0, now);
+            g.gain.linearRampToValueAtTime(0.18, now + 0.03);
+            g.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+            osc.connect(g);
+            g.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.2);
+            // 第二个泛音
+            const osc2 = audioCtx.createOscillator();
+            const g2 = audioCtx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(300 + intensity * 500, now);
+            osc2.frequency.exponentialRampToValueAtTime(200, now + 0.12);
+            g2.gain.setValueAtTime(0.0, now);
+            g2.gain.linearRampToValueAtTime(0.06, now + 0.02);
+            g2.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+            osc2.connect(g2);
+            g2.connect(audioCtx.destination);
+            osc2.start(now);
+            osc2.stop(now + 0.18);
+        }
+
+        function playPourSound() {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            // 能量注入 — 稳定的嗡嗡共鸣
+            const baseFreqs = [130, 195, 260, 325];
+            baseFreqs.forEach((f, i) => {
+                const osc = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = f;
+                g.gain.setValueAtTime(0.0, now);
+                g.gain.linearRampToValueAtTime(0.09 / (i + 1), now + 0.5);
+                g.gain.setValueAtTime(0.09 / (i + 1), now + 1.0);
+                g.gain.exponentialRampToValueAtTime(0.001, now + 2.0);
+                osc.connect(g);
+                g.connect(audioCtx.destination);
+                osc.start(now);
+                osc.stop(now + 2.0);
+            });
+            // 微微的调制感
+            const vib = audioCtx.createOscillator();
+            const vibGain = audioCtx.createGain();
+            vib.frequency.value = 4.5;
+            vibGain.gain.value = 8;
+            vib.connect(vibGain);
+            vib.start(now);
+            vib.stop(now + 2.0);
+        }
+
+        function playCutSound() {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            const baseFreq = 400 + Math.random() * 150;
+            // 软冲击瞬态 — 低通滤波噪声模拟碰撞质感
+            const nBuf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.12, audioCtx.sampleRate);
+            const nData = nBuf.getChannelData(0);
+            for (let i = 0; i < nData.length; i++) {
+                nData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioCtx.sampleRate * 0.025));
+            }
+            const nSrc = audioCtx.createBufferSource();
+            nSrc.buffer = nBuf;
+            const nF = audioCtx.createBiquadFilter();
+            nF.type = 'lowpass';
+            nF.frequency.value = 1200;
+            const nG = audioCtx.createGain();
+            nG.gain.setValueAtTime(0.25, now);
+            nG.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+            nSrc.connect(nF);
+            nF.connect(nG);
+            nG.connect(audioCtx.destination);
+            nSrc.start(now);
+            // 沉闷共振 — 模拟物体自身的振动衰减
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(baseFreq, now);
+            osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.6, now + 0.1);
+            g.gain.setValueAtTime(0.2, now);
+            g.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+            osc.connect(g);
+            g.connect(audioCtx.destination);
+            osc.start(now);
+            osc.stop(now + 0.18);
+        }
+
+        function initThree() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0xf5f0e8, 300, 2500); 
+            camera = new THREE.PerspectiveCamera(40, width / height, 1, 3000);
+            camera.position.z = 1000;
+
+            renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('webgl-canvas'), antialias: true, alpha: true });
+            renderer.setSize(width, height);
+            renderer.setClearColor(0x000000, 0);
+            renderer.outputColorSpace = THREE.SRGBColorSpace; 
+
+            scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+            const light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(200, 500, 400);
+            scene.add(light);
+
+            const geometry = new THREE.CylinderGeometry(15, 15, 12, 16); 
+            geometry.rotateX(Math.PI / 2);
+            geometry.scale(1.8, 0.8, 1);
+            const material = new THREE.MeshStandardMaterial({ roughness: 0.1, metalness: 0.1 });
+            instancedMesh = new THREE.InstancedMesh(geometry, material, INSTANCE_COUNT);
+            instancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+            scene.add(instancedMesh);
+        }
+
+        function createFallingPiece(x, y) {
+            const geom = new THREE.CylinderGeometry(15, 15, 30, 16);
+            geom.rotateZ(Math.PI / 2);
+            const mat = new THREE.MeshStandardMaterial({ color: COLOR_GLOW, roughness: 0.12, metalness: 0.08 });
+            const mesh = new THREE.Mesh(geom, mat);
+            mesh.position.set(x, y, 0);
+            scene.add(mesh);
+            fallingPieces.push({ 
+                mesh: mesh, vy: -5, rotX: (Math.random() - 0.5) * 0.2, rotY: (Math.random() - 0.5) * 0.2,
+                targetY: -200 + (Math.random() * 20 - 10), landed: false
+            });
+        }
+
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5 });
+        
+        hands.onResults(results => {
+            videoCtx.save();
+            videoCtx.clearRect(0, 0, videoCanvas.width, videoCanvas.height);
+            if (results.multiHandLandmarks) {
+                for (const landmarks of results.multiHandLandmarks) {
+                    try {
+                        drawConnectors(videoCtx, landmarks, window.HAND_CONNECTIONS || [], {color: 'rgba(255, 255, 255, 0.4)', lineWidth: 2});
+                        drawLandmarks(videoCtx, landmarks, {color: '#b87820', lineWidth: 1, radius: 3});
+                    } catch(e) {}
+                }
+            }
+            videoCtx.restore();
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length >= 1) {
+                startBGM();
+                const h = results.multiHandLandmarks;
+                const vW = 750, vH = 500; 
+                const norm = (p) => ({ x: (1 - p.x - 0.5) * vW, y: (1 - p.y - 0.5) * vH });
+
+                let t1, t2;
+                if (h.length === 2) {
+                    let h1 = norm(h[0][8]); let h2 = norm(h[1][8]);
+                    if (h1.x < h2.x) { t1 = h1; t2 = h2; } else { t1 = h2; t2 = h1; }
+                } else {
+                    t1 = norm(h[0][8]); t2 = { x: -t1.x, y: t1.y };
+                }
+
+                p1Smooth.lerp(new THREE.Vector3(t1.x, t1.y, 0), 0.25); 
+                p2Smooth.lerp(new THREE.Vector3(t2.x, t2.y, 0), 0.25);
+
+                const dist = p1Smooth.distanceTo(p2Smooth);
+                stretchRatio = Math.min(Math.max((dist - 80) / 600, 0), 1);
+
+                if (state === 'PULLING') {
+                    if (stretchRatio > 0.6) isFullyStretched = true;
+                    if (stretchRatio > 0.08 && !pullPlaying) {
+                        pullPlaying = true;
+                        playPullSound(stretchRatio);
+                    } else if (stretchRatio <= 0.08) {
+                        pullPlaying = false;
+                    }
+                    if (isFullyStretched && dist < 220) {
+                        foldCount++;
+                        isFullyStretched = false;
+                        if (foldCount >= MAX_FOLDS) {
+                            state = 'FILLING';
+                            playPourSound();
+                            updateUI("2. 光之芯 / GLOWING", "FILLING", "正在自动注入光影之芯，请保持双手平稳");
+                        }
+                        document.getElementById('val-folds').innerText = foldCount + " / 4";
+                    }
+                } else if (state === 'CUTTING') {
+                    if (cutCooldown > 0) cutCooldown--;
+                    if (stretchRatio > 0.4) isFullyStretched = true; 
+                    
+                    if (isFullyStretched && dist < 250 && cutCooldown === 0) { 
+                        piecesCut++;
+                        isFullyStretched = false;
+                        cutCooldown = 30;
+                        playCutSound();
+                        
+                        const remainRatio = 1.0 - (piecesCut / MAX_PIECES);
+                        const cutPosX = p1Smooth.x + (p2Smooth.x - p1Smooth.x) * remainRatio;
+                        createFallingPiece(cutPosX, p1Smooth.y - 100);
+
+                        if (piecesCut >= MAX_PIECES) {
+                            state = 'COMPLETE';
+                            document.getElementById('val-pieces').innerText = "6 / 6";
+                            document.getElementById('val-step').innerText = "完成 / FINISHED";
+                            
+                            // 隐藏所有提示
+                            document.getElementById('prompt-left').style.opacity = '0';
+                            document.getElementById('prompt-right').style.opacity = '0';
+                            document.getElementById('main-hint').style.opacity = '0';
+                            
+                            document.getElementById('complete-overlay').classList.add('show');
+                            
+                            targetCamZ = 450;  
+                            targetCamY = -120; 
+                            // 完成时背景音淡出
+                            if (bgmGain) {
+                                bgmGain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 3);
+                                setTimeout(() => { bgmStarted = false; }, 3500);
+                            }
+                            
+                            setTimeout(resetSystem, 8000);
+                        } else {
+                            document.getElementById('val-pieces').innerText = piecesCut + " / 6";
+                        }
+                    }
+                }
+                document.getElementById('val-status').innerText = "追踪正常";
+            } else {
+                p1Smooth.lerp(new THREE.Vector3(-100, 50, 0), 0.1); 
+                p2Smooth.lerp(new THREE.Vector3(100, 50, 0), 0.1);
+                stretchRatio += (0 - stretchRatio) * 0.1;
+                document.getElementById('val-status').innerText = "未识别双手";
+            }
+        });
+
+        // 🔥 更新三重 UI：侧边图示 + 中央文字
+        function updateUI(stepText, stateCode, centerText) {
+            document.getElementById('val-step').innerText = stepText;
+            document.getElementById('hint-text').innerText = centerText; // 更新中央提示文字
+            
+            const leftPrompt = document.getElementById('prompt-left');
+            const rightPrompt = document.getElementById('prompt-right');
+
+            if (stateCode === 'PULLING') {
+                leftPrompt.className = 'prompt-side anim-pull-left';
+                leftPrompt.innerHTML = SVG_ARROW_LEFT + '<div class="side-text">向外拉伸</div>';
+                
+                rightPrompt.className = 'prompt-side anim-pull-right';
+                rightPrompt.innerHTML = SVG_ARROW_RIGHT + '<div class="side-text">向外拉伸</div>';
+            } else if (stateCode === 'FILLING') {
+                leftPrompt.className = 'prompt-side anim-fill';
+                leftPrompt.innerHTML = SVG_CIRCLE + '<div class="side-text">光芯注入</div>';
+                
+                rightPrompt.className = 'prompt-side anim-fill';
+                rightPrompt.innerHTML = SVG_CIRCLE + '<div class="side-text">光芯注入</div>';
+            } else if (stateCode === 'CUTTING') {
+                leftPrompt.className = 'prompt-side anim-cut-left';
+                leftPrompt.innerHTML = SVG_ARROW_RIGHT + '<div class="side-text">向内合拢</div>';
+                
+                rightPrompt.className = 'prompt-side anim-cut-right';
+                rightPrompt.innerHTML = SVG_ARROW_LEFT + '<div class="side-text">向内合拢</div>';
+            }
+        }
+
+        function resetSystem() {
+            state = 'PULLING';
+            foldCount = 0; piecesCut = 0; fillingAmount = 0;
+            document.getElementById('complete-overlay').classList.remove('show');
+            
+            // 恢复所有提示显示
+            document.getElementById('prompt-left').style.opacity = '1';
+            document.getElementById('prompt-right').style.opacity = '1';
+            document.getElementById('main-hint').style.opacity = '1';
+            
+            updateUI("1. 拔糖 / PULLING", "PULLING", "向两侧拉伸后合拢，对折糖块");
+            
+            document.getElementById('val-folds').innerText = "0 / 4";
+            document.getElementById('val-pieces').innerText = "0 / 6";
+            document.getElementById('val-filling').innerText = "0%";
+            
+            targetCamZ = 1000;
+            targetCamY = 0;
+
+            fallingPieces.forEach(p => scene.remove(p.mesh));
+            fallingPieces = [];
+        }
+
+        new Camera(document.getElementById('input-video'), {
+            onFrame: async () => { await hands.send({ image: document.getElementById('input-video') }); },
+            width: 640, height: 480
+        }).start();
+
+        // 初始化
+        updateUI("1. 拔糖 / PULLING", "PULLING", "向两侧拉伸后合拢，对折糖块");
+
+        function update() {
+            smoothStretch += (stretchRatio - smoothStretch) * 0.15; 
+            document.getElementById('val-stretch').innerText = (smoothStretch * 100).toFixed(1) + "%";
+
+            if (state === 'PULLING') {
+                targetCamZ = 1000 - smoothStretch * 650; 
+                targetCamY = -smoothStretch * 150; 
+            } else if (state !== 'COMPLETE') {
+                targetCamZ = 1000; 
+                targetCamY = 0;
+            }
+
+            camera.position.z += (targetCamZ - camera.position.z) * 0.08;
+            camera.position.y += (targetCamY - camera.position.y) * 0.08;
+
+            if (state === 'FILLING') {
+                fillingAmount += 0.008; 
+                if (fillingAmount >= 1.0) {
+                    fillingAmount = 1.0; 
+                    state = 'CUTTING';
+                    updateUI("3. 切糖 / CUTTING", "CUTTING", "注入完成！双手如剪刀般快速合拢，切断糖块");
+                }
+                document.getElementById('val-filling').innerText = (fillingAmount * 100).toFixed(0) + "%";
+            }
+
+            let mid = new THREE.Vector3().addVectors(p1Smooth, p2Smooth).multiplyScalar(0.5);
+            const dist = p1Smooth.distanceTo(p2Smooth);
+            
+            if (state === 'PULLING') {
+                mid.y -= (50 + smoothStretch * 200);
+            } else {
+                mid.y -= (40 + dist * 0.1); 
+            }
+
+            const curve = new THREE.CatmullRomCurve3([p1Smooth, mid, p2Smooth]);
+            const frames = curve.computeFrenetFrames(INSTANCE_COUNT - 1);
+            
+            const time = Date.now() * 0.001;
+            const whiteness = Math.min(foldCount / MAX_FOLDS + (state !== 'PULLING' ? 0.2 : 0), 1.0);
+            
+            const renderRatio = state === 'CUTTING' || state === 'COMPLETE' ? 1.0 - (piecesCut / MAX_PIECES) : 1.0;
+
+            for (let i = 0; i < INSTANCE_COUNT; i++) {
+                const t = i / (INSTANCE_COUNT - 1);
+                
+                if (t > renderRatio) {
+                    dummyMatrix.makeScale(0, 0, 0);
+                    instancedMesh.setMatrixAt(i, dummyMatrix);
+                    continue;
+                }
+
+                let currentBaseColor = dummyColor.copy(COLOR_AMBER).lerp(COLOR_WHITE, whiteness);
+                let currentThickness = 1.0;
+
+                if (state === 'FILLING' || state === 'CUTTING' || state === 'COMPLETE') {
+                    const distFromCenter = Math.abs(t - 0.5) * 2.0; 
+                    let glowIntensity = Math.max(0, fillingAmount * 1.5 - distFromCenter);
+                    glowIntensity = Math.min(glowIntensity, 1.0); 
+
+                    currentBaseColor.lerp(COLOR_GLOW, glowIntensity);
+
+                    const pulse = Math.sin(time * 3) * 0.05 + 0.05;
+                    currentThickness += glowIntensity * (0.2 + pulse); 
+                }
+
+                const pos = curve.getPoint(t);
+                const n = frames.normals[i];
+                const b = frames.binormals[i];
+                const tan = frames.tangents[i];
+
+                baseMatrix.makeBasis(b, n, tan);
+                
+                const twistFreq = 2 + foldCount * 2;
+                twistRotation.makeRotationAxis(tan, t * Math.PI * twistFreq + time * (state === 'PULLING' ? 1.5 : 0.5));
+                baseMatrix.multiply(twistRotation);
+
+                dummyMatrix.makeTranslation(pos.x, pos.y, pos.z);
+                dummyMatrix.multiply(baseMatrix);
+
+                let s = 1.0 - smoothStretch * 0.3;
+                s *= (1.0 + foldCount * 0.03);
+                if (state !== 'PULLING') s *= 1.1; 
+                
+                const thickness = 1.0 + Math.pow(Math.abs(t - 0.5) * 2, 2) * 0.5;
+                
+                dummyScale.set(s * thickness * currentThickness, s * thickness * currentThickness, 1.0);
+                dummyMatrix.scale(dummyScale);
+
+                instancedMesh.setMatrixAt(i, dummyMatrix);
+                instancedMesh.setColorAt(i, currentBaseColor);
+            }
+            instancedMesh.instanceMatrix.needsUpdate = true;
+            instancedMesh.instanceColor.needsUpdate = true;
+
+            fallingPieces.forEach(p => {
+                if (!p.landed) {
+                    p.vy -= 0.6; 
+                    p.mesh.position.y += p.vy;
+                    p.mesh.rotation.x += p.rotX;
+                    p.mesh.rotation.y += p.rotY;
+
+                    if (p.mesh.position.y <= p.targetY) {
+                        p.mesh.position.y = p.targetY;
+                        p.vy *= -0.3; 
+                        p.rotX *= 0.5; 
+                        p.rotY *= 0.5;
+                        if (Math.abs(p.vy) < 1.0) p.landed = true;
+                    }
+                }
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            update();
+            renderer.render(scene, camera);
+        }
+
+        initThree();
+        animate();
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
